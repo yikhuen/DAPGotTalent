@@ -19,9 +19,11 @@ from train_singmos import (
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Evaluate SingMOS model on test set")
+    parser = argparse.ArgumentParser(description="Evaluate SingMOS model on any dataset split")
     parser.add_argument("--ckpt", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--data_root", type=str, default="./SingMOS", help="Path to SingMOS dataset")
+    parser.add_argument("--split", type=str, default="test", choices=["train", "valid", "test"],
+                        help="Which split to evaluate on (default: test, falls back to valid if test not available)")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
     parser.add_argument("--model_name", type=str, default="m-a-p/MERT-v1-95M", help="MERT model name")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
@@ -57,9 +59,16 @@ def main():
     with open(score_file) as f:
         score_data = json.load(f)["utterance"]
 
-    if "test" not in split_data:
-        print("Error: No test split found in dataset")
-        sys.exit(1)
+    # Determine which split to evaluate
+    eval_split = args.split
+    if eval_split not in split_data:
+        if eval_split == "test" and "valid" in split_data:
+            print(f"Note: '{eval_split}' split not found. Falling back to 'valid' split.")
+            eval_split = "valid"
+        else:
+            available = list(split_data.keys())
+            print(f"Error: Split '{eval_split}' not found. Available splits: {available}")
+            sys.exit(1)
 
     # Load checkpoint
     print(f"Loading checkpoint: {args.ckpt}")
@@ -83,21 +92,21 @@ def main():
         MOS_STD = float(train_mos_arr.std() + 1e-6)
         print(f"Computed MOS stats: mean={MOS_MEAN:.4f}, std={MOS_STD:.4f}")
 
-    # Load test data
-    test_items = build_items(split_data["test"], score_data, args.data_root)
-    print(f"Test items: {len(test_items)}")
+    # Load evaluation data
+    eval_items = build_items(split_data[eval_split], score_data, args.data_root)
+    print(f"{eval_split} items: {len(eval_items)}")
 
-    if len(test_items) == 0:
-        print("Error: No test items found")
+    if len(eval_items) == 0:
+        print(f"Error: No items found in '{eval_split}' split")
         sys.exit(1)
 
-    test_ds = SingMOSDataset(
-        test_items,
+    eval_ds = SingMOSDataset(
+        eval_items,
         augment=False,
         normalize_rms=args.rms_norm
     )
-    test_loader = DataLoader(
-        test_ds,
+    eval_loader = DataLoader(
+        eval_ds,
         batch_size=args.batch_size,
         shuffle=False,
         collate_fn=collate_fn,
@@ -117,13 +126,13 @@ def main():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    # Evaluate on test set
-    print("\nEvaluating on test set...")
-    mae, rmse, pearson, spearman = evaluate(model, test_loader, device, MOS_MEAN, MOS_STD)
+    # Evaluate on selected split
+    print(f"\nEvaluating on '{eval_split}' split...")
+    mae, rmse, pearson, spearman = evaluate(model, eval_loader, device, MOS_MEAN, MOS_STD)
 
     # Print results
     print("\n" + "=" * 50)
-    print("TEST SET RESULTS")
+    print(f"{eval_split.upper()} SET RESULTS")
     print("=" * 50)
     print(f"Checkpoint: {args.ckpt}")
     print(f"MAE:        {mae:.4f}")
@@ -136,7 +145,8 @@ def main():
     if args.output:
         results = {
             "checkpoint": args.ckpt,
-            "test_size": len(test_items),
+            "split": eval_split,
+            "split_size": len(eval_items),
             "mos_mean": MOS_MEAN,
             "mos_std": MOS_STD,
             "mae": float(mae),

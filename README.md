@@ -157,9 +157,9 @@ python train_singmos.py \
 
 ## Test Set Evaluation
 
-Evaluate any checkpoint on the test set independently using `eval_test.py`:
+Evaluate any checkpoint on any data split independently using `eval_test.py`:
 
-### Evaluate best checkpoint
+### Evaluate best checkpoint (auto-falls back to valid if test not available)
 
 ```bash
 python eval_test.py \
@@ -169,14 +169,31 @@ python eval_test.py \
     --device cuda
 ```
 
-### Evaluate latest checkpoint and save results to JSON
+### Evaluate on a specific split
+
+```bash
+# Evaluate on validation set
+python eval_test.py \
+    --ckpt ./checkpoints/best.pt \
+    --split valid \
+    --rms_norm \
+    --device cuda
+
+# Evaluate on training set (useful for checking overfitting)
+python eval_test.py \
+    --ckpt ./checkpoints/best.pt \
+    --split train \
+    --rms_norm \
+    --device cuda
+```
+
+### Save results to JSON
 
 ```bash
 python eval_test.py \
-    --ckpt ./checkpoints/latest.pt \
-    --data_root ./SingMOS \
+    --ckpt ./checkpoints/best.pt \
     --rms_norm \
-    --output results_latest.json \
+    --output results.json \
     --device cuda
 ```
 
@@ -196,6 +213,7 @@ done
 |----------|---------|-------------|
 | `--ckpt` | **required** | Path to model checkpoint |
 | `--data_root` | `./SingMOS` | Path to dataset |
+| `--split` | `test` | Which split to evaluate (train/valid/test). Falls back to valid if test unavailable |
 | `--device` | `cuda` | Device (cuda or cpu) |
 | `--batch_size` | 16 | Batch size |
 | `--rms_norm` | False | Apply RMS normalization (match training setting) |
