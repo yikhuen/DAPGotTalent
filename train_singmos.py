@@ -34,7 +34,19 @@ def get_args():
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda or cpu)")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument("--model_name", type=str, default="m-a-p/MERT-v1-95M", help="MERT model name")
+    parser.add_argument(
+        "--encoder_type",
+        type=str,
+        default="wav2vec2",
+        choices=["wav2vec2", "mert"],
+        help="Backbone encoder type"
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="facebook/wav2vec2-large-960h-lv60-self",
+        help="Backbone model name from Hugging Face"
+    )
     parser.add_argument("--download_data", action="store_true", help="Download dataset from HuggingFace")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--unfreeze_last_n", type=int, default=2, help="Unfreeze top N transformer layers")
@@ -131,11 +143,16 @@ def make_bin_weights(mos_list, bins=(1, 2, 3, 4, 5.01), max_ratio=10.0):
 # Model Architecture
 # ============================
 
-class MERTEncoder(nn.Module):
-    def __init__(self, model_name="m-a-p/MERT-v1-95M", layer_mode="last4", device=None):
+class BackboneEncoder(nn.Module):
+    def __init__(self, model_name, encoder_type="wav2vec2", layer_mode="last4", device=None):
         super().__init__()
-        print(f"Loading MERT model: {model_name}")
-        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        self.encoder_type = encoder_type
+        print(f"Loading {encoder_type} model: {model_name}")
+        # Wav2Vec2 is natively supported by transformers. MERT needs remote code.
+        if encoder_type == "mert":
+            self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        else:
+            self.model = AutoModel.from_pretrained(model_name)
         if device is not None:
             self.model = self.model.to(device)
         self.model.eval()
@@ -183,14 +200,21 @@ class MERTEncoder(nn.Module):
     def forward(self, wav, mask):
         dev = next(self.model.parameters()).device
         wav = wav.to(dev)
-        mask = mask.to(dev)
-
-        outputs = self.model(
-            wav,
-            attention_mask=mask,
-            output_hidden_states=True,
-            return_dict=True
-        )
+        mask = mask.to(dev).long()
+        if self.encoder_type == "wav2vec2":
+            outputs = self.model(
+                input_values=wav,
+                attention_mask=mask,
+                output_hidden_states=True,
+                return_dict=True
+            )
+        else:
+            outputs = self.model(
+                wav,
+                attention_mask=mask,
+                output_hidden_states=True,
+                return_dict=True
+            )
 
         if self.layer_mode == "last":
             h = outputs.last_hidden_state
@@ -304,7 +328,7 @@ def evaluate(model, loader, device, MOS_MEAN, MOS_STD, return_preds=False):
 # Checkpointing
 # ============================
 
-def save_checkpoint(path, epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD):
+def save_checkpoint(path, epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD, args):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({
         "epoch": epoch,
@@ -313,6 +337,8 @@ def save_checkpoint(path, epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_S
         "best_pearson": best_pearson,
         "mos_mean": MOS_MEAN,
         "mos_std": MOS_STD,
+        "encoder_type": args.encoder_type,
+        "model_name": args.model_name,
     }, path)
     print(f"Checkpoint saved: {path}")
 
@@ -435,7 +461,7 @@ def train(model, train_loader, val_loader, test_loader, device, MOS_MEAN, MOS_ST
         # Save checkpoints
         save_checkpoint(
             f"{args.ckpt_dir}/latest.pt",
-            epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD
+            epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD, args
         )
 
         if val_p > best_pearson:
@@ -443,7 +469,7 @@ def train(model, train_loader, val_loader, test_loader, device, MOS_MEAN, MOS_ST
             no_improve_epochs = 0
             save_checkpoint(
                 f"{args.ckpt_dir}/best.pt",
-                epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD
+                epoch, model, optimizer, best_pearson, MOS_MEAN, MOS_STD, args
             )
             print(f"New best Pearson: {best_pearson:.4f}")
         else:
@@ -617,7 +643,11 @@ def main():
 
     # Build model
     print("Building model...")
-    encoder = MERTEncoder(model_name=args.model_name, device=device)
+    encoder = BackboneEncoder(
+        model_name=args.model_name,
+        encoder_type=args.encoder_type,
+        device=device
+    )
     model = SingMOSModel(encoder).to(device)
 
     # Count parameters

@@ -11,7 +11,7 @@ import torch
 import torchaudio
 import numpy as np
 import soundfile as sf
-from train_singmos import MERTEncoder, SingMOSModel, mean_std_pooling
+from train_singmos import BackboneEncoder, SingMOSModel
 
 
 def get_args():
@@ -19,7 +19,19 @@ def get_args():
     parser.add_argument("--audio", type=str, required=True, help="Path to audio file or directory")
     parser.add_argument("--ckpt", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
-    parser.add_argument("--model_name", type=str, default="m-a-p/MERT-v1-95M", help="MERT model name")
+    parser.add_argument(
+        "--encoder_type",
+        type=str,
+        default=None,
+        choices=["wav2vec2", "mert"],
+        help="Backbone type; if omitted, try to read from checkpoint"
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        help="Backbone model name; if omitted, try to read from checkpoint"
+    )
     parser.add_argument("--mos_mean", type=float, default=None, help="MOS mean (if not in checkpoint)")
     parser.add_argument("--mos_std", type=float, default=None, help="MOS std (if not in checkpoint)")
     return parser.parse_args()
@@ -59,13 +71,22 @@ def predict_single(model, wav, device, MOS_MEAN, MOS_STD):
     return mos_pred.item()
 
 
-def load_model_and_stats(ckpt_path, model_name, device, mos_mean=None, mos_std=None):
+def load_model_and_stats(ckpt_path, model_name, encoder_type, device, mos_mean=None, mos_std=None):
     """Load model and statistics from checkpoint"""
     print(f"Loading checkpoint: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
-    # Build model
-    encoder = MERTEncoder(model_name=model_name, device=device)
+    ckpt_encoder_type = ckpt.get("encoder_type", "wav2vec2")
+    ckpt_model_name = ckpt.get("model_name", "facebook/wav2vec2-large-960h-lv60-self")
+    encoder_type = encoder_type or ckpt_encoder_type
+    model_name = model_name or ckpt_model_name
+
+    print(f"Encoder: {encoder_type} | Model: {model_name}")
+    encoder = BackboneEncoder(
+        model_name=model_name,
+        encoder_type=encoder_type,
+        device=device
+    )
     model = SingMOSModel(encoder).to(device)
     model.load_state_dict(ckpt["model"])
 
@@ -99,7 +120,7 @@ def main():
 
     # Load model
     model, MOS_MEAN, MOS_STD = load_model_and_stats(
-        args.ckpt, args.model_name, device,
+        args.ckpt, args.model_name, args.encoder_type, device,
         args.mos_mean, args.mos_std
     )
 

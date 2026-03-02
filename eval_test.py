@@ -13,7 +13,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 from train_singmos import (
-    MERTEncoder, SingMOSModel, SingMOSDataset, collate_fn,
+    BackboneEncoder, SingMOSModel, SingMOSDataset, collate_fn,
     build_items, evaluate, set_seed
 )
 
@@ -25,7 +25,19 @@ def get_args():
     parser.add_argument("--split", type=str, default="test", choices=["train", "valid", "test"],
                         help="Which split to evaluate on (default: test, falls back to valid if test not available)")
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
-    parser.add_argument("--model_name", type=str, default="m-a-p/MERT-v1-95M", help="MERT model name")
+    parser.add_argument(
+        "--encoder_type",
+        type=str,
+        default=None,
+        choices=["wav2vec2", "mert"],
+        help="Backbone encoder type; if omitted, read from checkpoint"
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        help="Backbone model name; if omitted, read from checkpoint"
+    )
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--rms_norm", action="store_true", help="Apply RMS normalization (should match training)")
     parser.add_argument("--output", type=str, default=None, help="Optional JSON file to save results")
@@ -77,6 +89,8 @@ def main():
         sys.exit(1)
 
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
+    encoder_type = args.encoder_type or ckpt.get("encoder_type", "wav2vec2")
+    model_name = args.model_name or ckpt.get("model_name", "facebook/wav2vec2-large-960h-lv60-self")
 
     # Get MOS stats from checkpoint
     if "mos_mean" in ckpt and "mos_std" in ckpt:
@@ -116,7 +130,12 @@ def main():
 
     # Build and load model
     print("Building model...")
-    encoder = MERTEncoder(model_name=args.model_name, device=device)
+    print(f"Encoder: {encoder_type} | Model: {model_name}")
+    encoder = BackboneEncoder(
+        model_name=model_name,
+        encoder_type=encoder_type,
+        device=device
+    )
     model = SingMOSModel(encoder).to(device)
     model.load_state_dict(ckpt["model"])
 

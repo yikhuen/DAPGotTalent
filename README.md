@@ -1,6 +1,6 @@
 # SingMOS Training & Inference
 
-MOS (Mean Opinion Score) prediction model for singing voice synthesis evaluation, using MERT embeddings.
+MOS (Mean Opinion Score) prediction model for singing voice synthesis evaluation, now defaulting to Wav2Vec2 embeddings.
 
 ## Files
 
@@ -92,6 +92,8 @@ git clone https://huggingface.co/datasets/TangRain/SingMOS
 python train_singmos.py \
     --data_root ./SingMOS \
     --ckpt_dir ./checkpoints \
+    --encoder_type wav2vec2 \
+    --model_name facebook/wav2vec2-large-960h-lv60-self \
     --epochs 30 \
     --batch_size 16 \
     --lr 1e-4 \
@@ -121,7 +123,8 @@ python train_singmos.py \
 | `--device` | cuda | Device (cuda or cpu) |
 | `--resume` | None | Path to checkpoint to resume |
 | `--download_data` | False | Download dataset from HuggingFace |
-| `--model_name` | m-a-p/MERT-v1-95M | MERT model variant |
+| `--encoder_type` | wav2vec2 | Backbone encoder (`wav2vec2` or `mert`) |
+| `--model_name` | facebook/wav2vec2-large-960h-lv60-self | Backbone model variant |
 | `--encoder_lr` | 1e-5 | Learning rate for unfrozen encoder layers |
 | `--weight_decay` | 1e-4 | Weight decay for AdamW |
 | `--unfreeze_last_n` | 2 | Number of top encoder layers to unfreeze |
@@ -230,6 +233,7 @@ python predict_mos.py \
     --ckpt ./checkpoints/best.pt \
     --device cuda
 ```
+`predict_mos.py` auto-loads `encoder_type` and `model_name` from checkpoint metadata.
 
 ### Predict on a directory of audio files
 
@@ -319,7 +323,7 @@ scp ubuntu@<lambda-ip>:~/singmos/checkpoints/best.pt ./
 
 ## Model Architecture
 
-- **Encoder**: MERT-v1-95M (head-only warmup, then optional staged unfreeze of top layers)
+- **Encoder**: Wav2Vec2 (`facebook/wav2vec2-large-960h-lv60-self`) by default; MERT still supported
 - **Pooling**: Mean + Std pooling over time
 - **Head**: LayerNorm + Linear(2D, 512) + ReLU + Dropout(0.2) + Linear(512, 1)
 - **Loss**: Hybrid loss (L1 + Pearson correlation)
@@ -351,7 +355,7 @@ python train_singmos.py --download_data  # Download dataset
 ```
 
 ### Model download fails
-The MERT model downloads from HuggingFace. If behind a firewall:
+The backbone model downloads from HuggingFace. If behind a firewall:
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com  # For China users
 python train_singmos.py
