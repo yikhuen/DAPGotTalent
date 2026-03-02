@@ -122,6 +122,38 @@ python train_singmos.py \
 | `--resume` | None | Path to checkpoint to resume |
 | `--download_data` | False | Download dataset from HuggingFace |
 | `--model_name` | m-a-p/MERT-v1-95M | MERT model variant |
+| `--encoder_lr` | 1e-5 | Learning rate for unfrozen encoder layers |
+| `--weight_decay` | 1e-4 | Weight decay for AdamW |
+| `--unfreeze_last_n` | 2 | Number of top encoder layers to unfreeze |
+| `--unfreeze_epoch` | 3 | Epoch index to start encoder fine-tuning |
+| `--scheduler_patience` | 3 | LR scheduler patience |
+| `--early_stop_patience` | 8 | Early stopping patience |
+| `--alpha_start` | 0.9 | Initial hybrid loss alpha |
+| `--alpha_end` | 0.6 | Final hybrid loss alpha |
+| `--train_augment` | False | Enable waveform augmentation during training |
+| `--rms_norm` | False | Apply RMS normalization to waveform |
+| `--no_weighted_sampler` | False | Disable weighted random sampling |
+| `--sampler_max_ratio` | 5.0 | Max sampler bin weight ratio |
+| `--seed` | 42 | Reproducible training seed |
+| `--eval_test` | False | Evaluate test split after training |
+
+### Recommended training (staged fine-tuning)
+
+```bash
+python train_singmos.py \
+    --data_root ./SingMOS \
+    --ckpt_dir ./checkpoints \
+    --epochs 40 \
+    --batch_size 16 \
+    --lr 1e-4 \
+    --encoder_lr 1e-5 \
+    --unfreeze_last_n 2 \
+    --unfreeze_epoch 3 \
+    --train_augment \
+    --rms_norm \
+    --eval_test \
+    --device cuda
+```
 
 ## Inference / Prediction
 
@@ -143,7 +175,7 @@ python predict_mos.py \
     --device cuda
 ```
 
-### If MOS stats not in checkpoint
+### If MOS stats are not in checkpoint
 
 ```bash
 python predict_mos.py \
@@ -153,6 +185,7 @@ python predict_mos.py \
     --mos_std 0.8123 \
     --device cuda
 ```
+`predict_mos.py` now requires valid MOS stats (from checkpoint or CLI args) and no longer uses approximate defaults.
 
 ## Example Output
 
@@ -221,7 +254,7 @@ scp ubuntu@<lambda-ip>:~/singmos/checkpoints/best.pt ./
 
 ## Model Architecture
 
-- **Encoder**: MERT-v1-95M (frozen during training)
+- **Encoder**: MERT-v1-95M (head-only warmup, then optional staged unfreeze of top layers)
 - **Pooling**: Mean + Std pooling over time
 - **Head**: LayerNorm + Linear(2D, 512) + ReLU + Dropout(0.2) + Linear(512, 1)
 - **Loss**: Hybrid loss (L1 + Pearson correlation)

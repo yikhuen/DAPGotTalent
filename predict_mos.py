@@ -77,11 +77,10 @@ def load_model_and_stats(ckpt_path, model_name, device, mos_mean=None, mos_std=N
         MOS_MEAN = ckpt["mos_mean"]
         MOS_STD = ckpt["mos_std"]
     else:
-        # Default values (should be computed from training data)
-        print("Warning: MOS mean/std not found in checkpoint. Using defaults.")
-        print("For accurate predictions, provide --mos_mean and --mos_std")
-        MOS_MEAN = 3.5  # Approximate default
-        MOS_STD = 0.8   # Approximate default
+        raise ValueError(
+            "MOS mean/std not found in checkpoint. "
+            "Please provide both --mos_mean and --mos_std."
+        )
 
     print(f"MOS mean: {MOS_MEAN:.4f}, std: {MOS_STD:.4f}")
     return model, MOS_MEAN, MOS_STD
