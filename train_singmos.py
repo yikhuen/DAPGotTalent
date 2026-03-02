@@ -15,7 +15,7 @@ import torchaudio
 import numpy as np
 import soundfile as sf
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-from transformers import AutoModel
+from transformers import AutoConfig, AutoModel, AutoModelForCTC
 from tqdm import tqdm
 from scipy.stats import pearsonr, spearmanr
 
@@ -44,7 +44,7 @@ def get_args():
     parser.add_argument(
         "--model_name",
         type=str,
-        default="facebook/wav2vec2-large-960h-lv60-self",
+        default="facebook/wav2vec2-base",
         help="Backbone model name from Hugging Face"
     )
     parser.add_argument("--download_data", action="store_true", help="Download dataset from HuggingFace")
@@ -53,6 +53,7 @@ def get_args():
     parser.add_argument("--unfreeze_epoch", type=int, default=3, help="Epoch index to unfreeze top layers")
     parser.add_argument("--scheduler_patience", type=int, default=3, help="ReduceLROnPlateau patience")
     parser.add_argument("--early_stop_patience", type=int, default=8, help="Early stopping patience")
+    parser.add_argument("--disable_early_stop", action="store_true", help="Disable early stopping")
     parser.add_argument("--alpha_start", type=float, default=0.9, help="Initial hybrid loss alpha")
     parser.add_argument("--alpha_end", type=float, default=0.6, help="Final hybrid loss alpha")
     parser.add_argument("--no_weighted_sampler", action="store_true", help="Disable weighted random sampling")
@@ -148,11 +149,27 @@ class BackboneEncoder(nn.Module):
         super().__init__()
         self.encoder_type = encoder_type
         print(f"Loading {encoder_type} model: {model_name}")
-        # Wav2Vec2 is natively supported by transformers. MERT needs remote code.
+        # Wav2Vec2 checkpoints are frequently published as CTC models with extra LM heads.
+        # For MOS regression we only need the backbone, so we load the proper backbone
+        # to avoid partial init warnings (lm_head unexpected / masked_spec_embed missing).
         if encoder_type == "mert":
             self.model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
         else:
-            self.model = AutoModel.from_pretrained(model_name)
+            config = AutoConfig.from_pretrained(model_name)
+            architectures = list(getattr(config, "architectures", []) or [])
+            if any("ForCTC" in arch for arch in architectures):
+                ctc_model = AutoModelForCTC.from_pretrained(model_name, config=config)
+                if hasattr(ctc_model, "wav2vec2"):
+                    self.model = ctc_model.wav2vec2
+                else:
+                    self.model = ctc_model.base_model
+            else:
+                self.model = AutoModel.from_pretrained(model_name, config=config)
+
+            # Disable Wav2Vec2 SpecAugment inside the backbone. This avoids reliance on
+            # masked pretraining embeddings and keeps training deterministic for MOS regression.
+            if hasattr(self.model, "config") and hasattr(self.model.config, "apply_spec_augment"):
+                self.model.config.apply_spec_augment = False
         if device is not None:
             self.model = self.model.to(device)
         self.model.eval()
@@ -383,7 +400,7 @@ def build_optimizer(model, args):
     return torch.optim.AdamW(param_groups)
 
 
-def train(model, train_loader, val_loader, test_loader, device, MOS_MEAN, MOS_STD, args):
+def train(model, train_loader, val_loader, test_loaders, device, MOS_MEAN, MOS_STD, args):
     model.to(device)
 
     optimizer = build_optimizer(model, args)
@@ -474,17 +491,18 @@ def train(model, train_loader, val_loader, test_loader, device, MOS_MEAN, MOS_ST
             print(f"New best Pearson: {best_pearson:.4f}")
         else:
             no_improve_epochs += 1
-            if no_improve_epochs >= args.early_stop_patience:
+            if (not args.disable_early_stop) and (no_improve_epochs >= args.early_stop_patience):
                 print(f"Early stopping triggered at epoch {epoch}")
                 break
 
     print(f"Training complete. Best Pearson: {best_pearson:.4f}")
-    if test_loader is not None:
-        t_mae, t_rmse, t_p, t_s = evaluate(model, test_loader, device, MOS_MEAN, MOS_STD)
-        print(
-            f"Test | MAE {t_mae:.3f} | RMSE {t_rmse:.3f} | "
-            f"P {t_p:.3f} | S {t_s:.3f}"
-        )
+    if test_loaders:
+        for split_name, loader in test_loaders.items():
+            t_mae, t_rmse, t_p, t_s = evaluate(model, loader, device, MOS_MEAN, MOS_STD)
+            print(
+                f"{split_name} | MAE {t_mae:.3f} | RMSE {t_rmse:.3f} | "
+                f"P {t_p:.3f} | S {t_s:.3f}"
+            )
 
 
 def set_seed(seed):
@@ -572,12 +590,16 @@ def main():
     # Build item lists
     train_items = build_items(split_data["train"], score_data, args.data_root)
     val_items = build_items(split_data["valid"], score_data, args.data_root)
-    test_items = build_items(split_data["test"], score_data, args.data_root) if "test" in split_data else []
+    test_split_names = [s for s in ("test", "eval_v1", "eval_v2") if s in split_data]
+    test_items_map = {
+        split_name: build_items(split_data[split_name], score_data, args.data_root)
+        for split_name in test_split_names
+    }
 
     print(f"Train items: {len(train_items)}")
     print(f"Val items: {len(val_items)}")
-    if test_items:
-        print(f"Test items: {len(test_items)}")
+    for split_name, items in test_items_map.items():
+        print(f"{split_name} items: {len(items)}")
 
     # Compute MOS statistics
     train_mos_arr = np.array([mos for _, mos in train_items], dtype=np.float32)
@@ -596,11 +618,15 @@ def main():
         augment=False,
         normalize_rms=args.rms_norm
     )
-    test_ds = SingMOSDataset(
-        test_items,
-        augment=False,
-        normalize_rms=args.rms_norm
-    ) if test_items else None
+    test_ds_map = {
+        split_name: SingMOSDataset(
+            items,
+            augment=False,
+            normalize_rms=args.rms_norm
+        )
+        for split_name, items in test_items_map.items()
+        if len(items) > 0
+    }
 
     # Create sampler with bin weights
     train_mos = [mos for _, mos in train_items]
@@ -632,14 +658,17 @@ def main():
         num_workers=4,
         pin_memory=True if device.type == "cuda" else False
     )
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=4,
-        pin_memory=True if device.type == "cuda" else False
-    ) if test_ds is not None else None
+    test_loaders = {
+        split_name: DataLoader(
+            ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            num_workers=4,
+            pin_memory=True if device.type == "cuda" else False
+        )
+        for split_name, ds in test_ds_map.items()
+    }
 
     # Build model
     print("Building model...")
@@ -661,7 +690,7 @@ def main():
         model,
         train_loader,
         val_loader,
-        test_loader if args.eval_test else None,
+        test_loaders if args.eval_test else None,
         device,
         MOS_MEAN,
         MOS_STD,

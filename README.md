@@ -93,7 +93,7 @@ python train_singmos.py \
     --data_root ./SingMOS \
     --ckpt_dir ./checkpoints \
     --encoder_type wav2vec2 \
-    --model_name facebook/wav2vec2-large-960h-lv60-self \
+    --model_name facebook/wav2vec2-base \
     --epochs 30 \
     --batch_size 16 \
     --lr 1e-4 \
@@ -124,13 +124,14 @@ python train_singmos.py \
 | `--resume` | None | Path to checkpoint to resume |
 | `--download_data` | False | Download dataset from HuggingFace |
 | `--encoder_type` | wav2vec2 | Backbone encoder (`wav2vec2` or `mert`) |
-| `--model_name` | facebook/wav2vec2-large-960h-lv60-self | Backbone model variant |
+| `--model_name` | facebook/wav2vec2-base | Backbone model variant |
 | `--encoder_lr` | 1e-5 | Learning rate for unfrozen encoder layers |
 | `--weight_decay` | 1e-4 | Weight decay for AdamW |
 | `--unfreeze_last_n` | 2 | Number of top encoder layers to unfreeze |
 | `--unfreeze_epoch` | 3 | Epoch index to start encoder fine-tuning |
 | `--scheduler_patience` | 3 | LR scheduler patience |
 | `--early_stop_patience` | 8 | Early stopping patience |
+| `--disable_early_stop` | False | Disable early stopping entirely |
 | `--alpha_start` | 0.9 | Initial hybrid loss alpha |
 | `--alpha_end` | 0.6 | Final hybrid loss alpha |
 | `--train_augment` | False | Enable waveform augmentation during training |
@@ -138,7 +139,7 @@ python train_singmos.py \
 | `--no_weighted_sampler` | False | Disable weighted random sampling |
 | `--sampler_max_ratio` | 5.0 | Max sampler bin weight ratio |
 | `--seed` | 42 | Reproducible training seed |
-| `--eval_test` | False | Evaluate test split after training |
+| `--eval_test` | False | Evaluate available benchmark split(s): `test`, `eval_v1`, `eval_v2` |
 
 ### Recommended training (staged fine-tuning)
 
@@ -154,6 +155,7 @@ python train_singmos.py \
     --unfreeze_epoch 3 \
     --train_augment \
     --rms_norm \
+    --disable_early_stop \
     --eval_test \
     --device cuda
 ```
@@ -162,7 +164,7 @@ python train_singmos.py \
 
 Evaluate any checkpoint on any data split independently using `eval_test.py`:
 
-### Evaluate best checkpoint (auto-falls back to valid if test not available)
+### Evaluate best checkpoint (auto-falls back to `eval_v1` then `valid` if `test` is unavailable)
 
 ```bash
 python eval_test.py \
@@ -186,6 +188,20 @@ python eval_test.py \
 python eval_test.py \
     --ckpt ./checkpoints/best.pt \
     --split train \
+    --rms_norm \
+    --device cuda
+
+# Evaluate SingMOS benchmark split v1
+python eval_test.py \
+    --ckpt ./checkpoints/best.pt \
+    --split eval_v1 \
+    --rms_norm \
+    --device cuda
+
+# Evaluate SingMOS benchmark split v2
+python eval_test.py \
+    --ckpt ./checkpoints/best.pt \
+    --split eval_v2 \
     --rms_norm \
     --device cuda
 ```
@@ -216,7 +232,7 @@ done
 |----------|---------|-------------|
 | `--ckpt` | **required** | Path to model checkpoint |
 | `--data_root` | `./SingMOS` | Path to dataset |
-| `--split` | `test` | Which split to evaluate (train/valid/test). Falls back to valid if test unavailable |
+| `--split` | `test` | Which split to evaluate (`train`/`valid`/`test`/`eval_v1`/`eval_v2`); `test` falls back to `eval_v1` then `valid` |
 | `--device` | `cuda` | Device (cuda or cpu) |
 | `--batch_size` | 16 | Batch size |
 | `--rms_norm` | False | Apply RMS normalization (match training setting) |
@@ -323,7 +339,7 @@ scp ubuntu@<lambda-ip>:~/singmos/checkpoints/best.pt ./
 
 ## Model Architecture
 
-- **Encoder**: Wav2Vec2 (`facebook/wav2vec2-large-960h-lv60-self`) by default; MERT still supported
+- **Encoder**: Wav2Vec2 (`facebook/wav2vec2-base`) by default; MERT still supported
 - **Pooling**: Mean + Std pooling over time
 - **Head**: LayerNorm + Linear(2D, 512) + ReLU + Dropout(0.2) + Linear(512, 1)
 - **Loss**: Hybrid loss (L1 + Pearson correlation)

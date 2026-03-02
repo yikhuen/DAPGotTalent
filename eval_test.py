@@ -22,8 +22,13 @@ def get_args():
     parser = argparse.ArgumentParser(description="Evaluate SingMOS model on any dataset split")
     parser.add_argument("--ckpt", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument("--data_root", type=str, default="./SingMOS", help="Path to SingMOS dataset")
-    parser.add_argument("--split", type=str, default="test", choices=["train", "valid", "test"],
-                        help="Which split to evaluate on (default: test, falls back to valid if test not available)")
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["train", "valid", "test", "eval_v1", "eval_v2"],
+        help="Which split to evaluate on (default: test; falls back to valid if missing)"
+    )
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda or cpu)")
     parser.add_argument(
         "--encoder_type",
@@ -74,9 +79,17 @@ def main():
     # Determine which split to evaluate
     eval_split = args.split
     if eval_split not in split_data:
-        if eval_split == "test" and "valid" in split_data:
-            print(f"Note: '{eval_split}' split not found. Falling back to 'valid' split.")
-            eval_split = "valid"
+        if eval_split == "test":
+            if "eval_v1" in split_data:
+                print("Note: 'test' split not found. Falling back to 'eval_v1'.")
+                eval_split = "eval_v1"
+            elif "valid" in split_data:
+                print("Note: 'test' split not found. Falling back to 'valid'.")
+                eval_split = "valid"
+            else:
+                available = list(split_data.keys())
+                print(f"Error: Split '{eval_split}' not found. Available splits: {available}")
+                sys.exit(1)
         else:
             available = list(split_data.keys())
             print(f"Error: Split '{eval_split}' not found. Available splits: {available}")
@@ -90,7 +103,7 @@ def main():
 
     ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     encoder_type = args.encoder_type or ckpt.get("encoder_type", "wav2vec2")
-    model_name = args.model_name or ckpt.get("model_name", "facebook/wav2vec2-large-960h-lv60-self")
+    model_name = args.model_name or ckpt.get("model_name", "facebook/wav2vec2-base")
 
     # Get MOS stats from checkpoint
     if "mos_mean" in ckpt and "mos_std" in ckpt:

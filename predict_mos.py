@@ -77,7 +77,7 @@ def load_model_and_stats(ckpt_path, model_name, encoder_type, device, mos_mean=N
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
 
     ckpt_encoder_type = ckpt.get("encoder_type", "wav2vec2")
-    ckpt_model_name = ckpt.get("model_name", "facebook/wav2vec2-large-960h-lv60-self")
+    ckpt_model_name = ckpt.get("model_name", "facebook/wav2vec2-base")
     encoder_type = encoder_type or ckpt_encoder_type
     model_name = model_name or ckpt_model_name
 
