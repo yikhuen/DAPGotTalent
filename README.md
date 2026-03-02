@@ -155,6 +155,53 @@ python train_singmos.py \
     --device cuda
 ```
 
+## Test Set Evaluation
+
+Evaluate any checkpoint on the test set independently using `eval_test.py`:
+
+### Evaluate best checkpoint
+
+```bash
+python eval_test.py \
+    --ckpt ./checkpoints/best.pt \
+    --data_root ./SingMOS \
+    --rms_norm \
+    --device cuda
+```
+
+### Evaluate latest checkpoint and save results to JSON
+
+```bash
+python eval_test.py \
+    --ckpt ./checkpoints/latest.pt \
+    --data_root ./SingMOS \
+    --rms_norm \
+    --output results_latest.json \
+    --device cuda
+```
+
+### Compare multiple checkpoints
+
+```bash
+# Evaluate all checkpoints and compare
+for ckpt in ./checkpoints/*.pt; do
+    echo "Evaluating: $ckpt"
+    python eval_test.py --ckpt "$ckpt" --rms_norm --device cuda
+done
+```
+
+### eval_test.py arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--ckpt` | **required** | Path to model checkpoint |
+| `--data_root` | `./SingMOS` | Path to dataset |
+| `--device` | `cuda` | Device (cuda or cpu) |
+| `--batch_size` | 16 | Batch size |
+| `--rms_norm` | False | Apply RMS normalization (match training setting) |
+| `--output` | None | JSON file to save results |
+| `--seed` | 42 | Random seed |
+
 ## Inference / Prediction
 
 ### Predict on a single audio file
