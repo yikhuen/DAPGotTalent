@@ -15,7 +15,7 @@ import torchaudio
 import numpy as np
 import soundfile as sf
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
-from transformers import AutoConfig, AutoModel, AutoModelForCTC
+from transformers import AutoConfig, AutoModel, AutoModelForCTC, AutoModelForPreTraining
 from tqdm import tqdm
 from scipy.stats import pearsonr, spearmanr
 
@@ -157,12 +157,17 @@ class BackboneEncoder(nn.Module):
         else:
             config = AutoConfig.from_pretrained(model_name)
             architectures = list(getattr(config, "architectures", []) or [])
+            task_model = None
             if any("ForCTC" in arch for arch in architectures):
-                ctc_model = AutoModelForCTC.from_pretrained(model_name, config=config)
-                if hasattr(ctc_model, "wav2vec2"):
-                    self.model = ctc_model.wav2vec2
+                task_model = AutoModelForCTC.from_pretrained(model_name, config=config)
+            elif any("ForPreTraining" in arch for arch in architectures):
+                task_model = AutoModelForPreTraining.from_pretrained(model_name, config=config)
+
+            if task_model is not None:
+                if hasattr(task_model, "wav2vec2"):
+                    self.model = task_model.wav2vec2
                 else:
-                    self.model = ctc_model.base_model
+                    self.model = task_model.base_model
             else:
                 self.model = AutoModel.from_pretrained(model_name, config=config)
 
